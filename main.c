@@ -18,7 +18,7 @@ int RADIUS = 40;
 
 /* Todo: convert to moved scale to allow displacement and zoom - See POS() */
 Vector2 DISPL = (Vector2) { 0, 0 };
-Vector2 SCALE = (Vector2) { 1, 1 };
+float SCALE = 0.5;
 
 bool need_update = true;
 
@@ -43,13 +43,13 @@ struct FS_Node {
 float
 POSX(float x)
 {
-        return (x + DISPL.x) * SCALE.x;
+        return (x + DISPL.x) * SCALE;
 }
 
 float
 POSY(float y)
 {
-        return (y + DISPL.y) * SCALE.y;
+        return (y + DISPL.y) * SCALE;
 }
 
 Vector2
@@ -59,16 +59,35 @@ POS(Vector2 pos)
         return v;
 }
 
-FS_Node *
-get_grabbed_node(FS_Node *root, Vector2 pos)
+float
+SOPX(float x)
 {
-        if (CheckCollisionPointCircle(pos, root->pos, RADIUS)) {
+        return x / SCALE - DISPL.x;
+}
+
+float
+SOPY(float y)
+{
+        return y / SCALE - DISPL.y;
+}
+
+Vector2
+SOP(Vector2 pos)
+{
+        Vector2 v = (Vector2) { .x = SOPX(pos.x), .y = SOPY(pos.y) };
+        return v;
+}
+
+FS_Node *
+get_grabbed_node(FS_Node *root, Vector2 raw_pos)
+{
+        if (CheckCollisionPointCircle(raw_pos, root->pos, RADIUS)) {
                 return root;
         }
 
         for_da_each(n, &root->childs)
         {
-                FS_Node *node = get_grabbed_node(*n, pos);
+                FS_Node *node = get_grabbed_node(*n, raw_pos);
                 if (node) return node;
         }
         return NULL;
@@ -78,7 +97,7 @@ void fsnode_recalc_child_positions(FS_Node *parent);
 void fsnode_populate(FS_Node *node);
 
 const double DB_CLICK_LAPSE = 0.3;
-const double NO_GRAB_LAPSE = 0.05;
+const double NO_GRAB_LAPSE = 0.1;
 
 void
 mouse_event(FS_Node *root)
@@ -86,11 +105,17 @@ mouse_event(FS_Node *root)
         static FS_Node *grabbed_node = NULL;
         static double last_click = 0;
         static double grab_start = 0;
+        static Vector2 left_down;
+        static bool left_down_updated = false;
         Vector2 pos = (Vector2) { -1, -1 };
+        bool pos_updated = false;
         double t = 0;
 
         if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-                if (pos.x == -1 && pos.y == -1) pos = GetMousePosition();
+                if (!pos_updated) {
+                        pos = SOP(GetMousePosition());
+                        pos_updated = true;
+                }
                 if (t == 0) t = GetTime();
                 if (grab_start == 0) grab_start = t;
                 if (!grabbed_node) {
@@ -104,23 +129,56 @@ mouse_event(FS_Node *root)
                                 fsnode_recalc_child_positions(grabbed_node);
                                 need_update = 1;
                         }
+                        left_down_updated = false;
+                }
+
+                if (!grabbed_node && left_down_updated) {
+                        Vector2 pos = GetMousePosition();
+                        DISPL.x += (-left_down.x + pos.x) / SCALE;
+                        DISPL.y += (-left_down.y + pos.y) / SCALE;
+                        left_down_updated = false;
+                }
+
+                if (!left_down_updated) {
+                        left_down = GetMousePosition();
+                        left_down_updated = true;
                 }
         }
 
         if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                if (pos.x == -1 && pos.y == -1) pos = GetMousePosition();
+                if (!pos_updated) {
+                        pos = SOP(GetMousePosition());
+                        pos_updated = true;
+                }
                 if (t == 0) t = GetTime();
                 grabbed_node = NULL;
                 grab_start = 0;
+                left_down_updated = false;
         }
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                if (pos.x == -1 && pos.y == -1) pos = GetMousePosition();
+                if (!pos_updated) {
+                        pos = SOP(GetMousePosition());
+                        pos_updated = true;
+                }
                 if (t == 0) t = GetTime();
                 if (t - last_click <= DB_CLICK_LAPSE) {
                         if (grabbed_node) fsnode_populate(grabbed_node);
                 }
                 last_click = t;
+                left_down_updated = false;
+        }
+
+        float scroll;
+        const float SCROLL_FACTOR = 5.;
+        float SCALE_PERCENT = 100 * SCALE / 1.;
+        if ((scroll = GetMouseWheelMove())) {
+                SCALE_PERCENT += scroll * SCROLL_FACTOR;
+                SCALE = SCALE_PERCENT / 100;
+                printf("SCALE: %f (%f%%)\n", SCALE, SCALE_PERCENT);
+                grabbed_node = NULL;
+                grab_start = 0;
+                left_down_updated = false;
         }
 }
 
@@ -200,10 +258,10 @@ fsnode_draw(FS_Node *node)
         int fontsize = 20;
         for_da_each(n, &node->childs)
         {
-                DrawLineV(node->pos, (*n)->pos, WHITE);
+                DrawLineV(POS(node->pos), POS((*n)->pos), WHITE);
         }
-        DrawCircle(node->pos.x, node->pos.y, RADIUS, node->color);
-        DrawText(node->name, node->pos.x - (RADIUS) / 2.0, node->pos.y - fontsize / 2.0, fontsize, WHITE);
+        DrawCircleV(POS(node->pos), RADIUS * SCALE, node->color);
+        DrawText(node->name, POSX(node->pos.x - (RADIUS * SCALE) / 2.0), POSY(node->pos.y - fontsize / 2.0), fontsize * SCALE, WHITE);
         for_da_each(n, &node->childs)
         {
                 fsnode_draw(*n);
