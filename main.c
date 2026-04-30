@@ -12,13 +12,121 @@
 #define rand_between(x, y) ((x) + (rand() % ((y) - (x))))
 #define rand_choose(x) ((x)[rand() % (sizeof(x) / sizeof(*x))])
 
+enum Color_Type {
+        C_UNKNOWN = DT_UNKNOWN,
+        C_DEFAULT = C_UNKNOWN,
+        C_FIFO = DT_FIFO,
+        C_CHR = DT_CHR,
+        C_DIR = DT_DIR,
+        C_BLK = DT_BLK,
+        C_REG = DT_REG,
+        C_LNK = DT_LNK,
+        C_SOCK = DT_SOCK,
+        C_WHT = DT_WHT,
+        C_BG,
+        C_ROOT,
+        C_LINE,
+};
+
+
+#define GRUV_BG ((Color) { \
+.a = 0xFF,                 \
+.r = 0x1d,                 \
+.g = 0x20,                 \
+.b = 0x21,                 \
+})
+
+#define GRUV_FG ((Color) { \
+.a = 0xFF,                 \
+.r = 0xd4,                 \
+.g = 0xbe,                 \
+.b = 0x98,                 \
+})
+
+#define GRUV_BLACK ((Color) { \
+.a = 0xFF,                    \
+.r = 0x92,                    \
+.g = 0x83,                    \
+.b = 0x74,                    \
+})
+
+#define GRUV_RED ((Color) { \
+.a = 0xFF,                  \
+.r = 0xea,                  \
+.g = 0x69,                  \
+.b = 0x62,                  \
+})
+
+#define GRUV_GREEN ((Color) { \
+.a = 0xFF,                    \
+.r = 0xa9,                    \
+.g = 0xb6,                    \
+.b = 0x65,                    \
+})
+
+#define GRUV_YELLOW ((Color) { \
+.a = 0xFF,                     \
+.r = 0xe7,                     \
+.g = 0x8a,                     \
+.b = 0x4e,                     \
+})
+
+#define GRUV_BLUE ((Color) { \
+.a = 0xFF,                   \
+.r = 0x7d,                   \
+.g = 0xae,                   \
+.b = 0xa3,                   \
+})
+
+#define GRUV_MAGENTA ((Color) { \
+.a = 0xFF,                      \
+.r = 0xd3,                      \
+.g = 0x86,                      \
+.b = 0x9b,                      \
+})
+
+#define GRUV_CYAN ((Color) { \
+.a = 0xFF,                   \
+.r = 0x89,                   \
+.g = 0xb4,                   \
+.b = 0x82,                   \
+})
+
+#define GRUV_WHITE ((Color) { \
+.a = 0xFF,                    \
+.r = 0xdd,                    \
+.g = 0xc7,                    \
+.b = 0xa1,                    \
+})
+
+#define COLOR_TEXT GRUV_FG
+#define COLOR_BG GRUV_BG
+
+struct Color_Pair {
+        Color fg, bg;
+};
+
+static const struct Color_Pair colors_lut[] = {
+        [C_DEFAULT] = { COLOR_TEXT, COLOR_BG },
+        [C_FIFO] = { COLOR_TEXT, COLOR_BG },
+        [C_CHR] = { COLOR_TEXT, COLOR_BG },
+        [C_DIR] = { COLOR_TEXT, GRUV_BLUE },
+        [C_BLK] = { COLOR_TEXT, COLOR_BG },
+        [C_REG] = { COLOR_TEXT, COLOR_BG },
+        [C_LNK] = { COLOR_TEXT, COLOR_BG },
+        [C_SOCK] = { COLOR_TEXT, COLOR_BG },
+        [C_WHT] = { COLOR_TEXT, COLOR_BG },
+        [C_BG] = { COLOR_BG },
+        [C_ROOT] = { GRUV_RED, GRUV_RED },
+        [C_LINE] = { GRUV_BLACK },
+};
+
 int WIDTH = 800;
 int HEIGHT = 600;
 int RADIUS = 40;
 
-/* Todo: convert to moved scale to allow displacement and zoom - See POS() */
 Vector2 DISPL = (Vector2) { 0, 0 };
-float SCALE = 0.5;
+float SCALE = 1.;
 
 bool need_update = true;
 
@@ -37,7 +145,8 @@ struct FS_Node {
         // graphical representation
         Vector2 pos;
         unsigned int custom_pos : 1;
-        Color color;
+        struct Color_Pair color;
+        bool fill;
 };
 
 float
@@ -229,7 +338,7 @@ fsnode_init(FS_Node *node, FS_Node *parent, char *path)
 
         *node = (FS_Node) {
                 .path = strdup(path),
-                .color = BLUE,
+                .color = colors_lut[C_DEFAULT],
         };
         node->name = basename(node->path);
 
@@ -247,7 +356,8 @@ FS_Node *
 fsnode_root(char *path)
 {
         FS_Node *node = fsnode_init(fsnode_alloc(), NULL, path);
-        node->color = RED;
+        node->color = colors_lut[C_ROOT];
+        node->fill = false;
         return node;
 }
 
@@ -258,10 +368,23 @@ fsnode_draw(FS_Node *node)
         int fontsize = 20;
         for_da_each(n, &node->childs)
         {
-                DrawLineV(POS(node->pos), POS((*n)->pos), WHITE);
+                Vector2 P = POS(node->pos);
+                Vector2 Q = POS((*n)->pos);
+                float m = (P.x - Q.x) / (P.y - Q.y);
+                float y = (RADIUS * SCALE) / sqrtf(1 + m * m);
+                float s = P.y < Q.y ? 1 : -1;
+                Vector2 P2 = (Vector2) { P.x + m * y * s, P.y + y * s };
+                Vector2 Q2 = (Vector2) { Q.x - m * y * s, Q.y - y * s };
+                DrawLineV(P2, Q2, colors_lut[C_LINE].fg);
         }
-        DrawCircleV(POS(node->pos), RADIUS * SCALE, node->color);
-        DrawText(node->name, POSX(node->pos.x - (RADIUS * SCALE) / 2.0), POSY(node->pos.y - fontsize / 2.0), fontsize * SCALE, WHITE);
+
+        if (node->fill) {
+                DrawCircleV(POS(node->pos), RADIUS * SCALE, node->color.bg);
+        } else {
+                DrawCircleLinesV(POS(node->pos), RADIUS * SCALE, node->color.bg);
+        }
+
+        DrawText(node->name, POSX(node->pos.x - (RADIUS * SCALE) / 2.0), POSY(node->pos.y - fontsize / 2.0), fontsize * SCALE, node->color.fg);
         for_da_each(n, &node->childs)
         {
                 fsnode_draw(*n);
@@ -292,10 +415,7 @@ fsnode_populate(FS_Node *node)
                     // || !strcmp(entry->d_name, "..")
                     ) continue;
                 FS_Node *n = fsnode_init(fsnode_alloc(), node, path_cat(node->path, entry->d_name));
-                switch (entry->d_type) {
-                case DT_DIR: n->color = ORANGE; break;
-                case DT_LNK: n->color = MAGENTA; break;
-                }
+                n->color = colors_lut[entry->d_type];
         }
         closedir(dir);
 }
@@ -327,7 +447,7 @@ main(int argc, char **argv)
         while (!WindowShouldClose()) {
                 BeginDrawing();
                 if (need_update) {
-                        ClearBackground(BLACK);
+                        ClearBackground(colors_lut[C_BG].fg);
                         fsnode_draw(root);
                         need_update = false | 1; // dont use this variable
                 }
